@@ -1,12 +1,12 @@
 package ru.evotor.report
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.monitorjbl.xlsx.StreamingReader
 import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.CellType.*
 import org.apache.poi.ss.usermodel.Row
 import org.apache.poi.ss.usermodel.Sheet
 import org.apache.poi.ss.util.NumberToTextConverter
-import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.util.*
@@ -16,7 +16,10 @@ object Xlsx2JsonParser {
     private val OBJECT_MAPPER = ObjectMapper()
 
     fun parseFile(file: File, process: (SheetRecord) -> Unit) {
-        XSSFWorkbook(file).use { workbook ->
+        StreamingReader.builder()
+                .rowCacheSize(100)
+                .bufferSize(4096)
+                .open(file).use { workbook ->
             workbook.forEach {
                 process(parseSheet(file.name, it))
             }
