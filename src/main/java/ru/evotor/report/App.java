@@ -41,14 +41,13 @@ public class App {
 	}
 
 	private static void saveSheet(Connection connection, SheetRecord sheetRecord) {
-		LOGGER.info(sheetRecord.getData());
-//		DbUtils.usePreparedStatement(connection, QUERY, statement -> {
-//			statement.setString(1, sheetRecord.getFileName());
-//			statement.setString(2, sheetRecord.getSheetName());
-//			statement.setString(3, sheetRecord.getKeys());
-//			statement.setString(4, sheetRecord.getData());
-//			statement.executeUpdate();
-//		});
+		DbUtils.usePreparedStatement(connection, QUERY, statement -> {
+			statement.setString(1, sheetRecord.getFileName());
+			statement.setString(2, sheetRecord.getSheetName());
+			statement.setString(3, sheetRecord.getKeys());
+			statement.setString(4, sheetRecord.getData());
+			statement.executeUpdate();
+		});
 	}
 
 }
