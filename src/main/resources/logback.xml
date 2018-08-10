@@ -1,23 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration scan="true" scanPeriod="60 seconds">
 
-  <property name="loggingPattern" value="%-5level %d{yyyy-MM-dd HH:mm:ss,Europe/Moscow} %file:%line: %message%n" />
+    <property name="loggingPattern" value="%-5level %d{yyyy-MM-dd HH:mm:ss,Europe/Moscow} %file:%line: %message%n"/>
 
-  <appender name="console" class="ch.qos.logback.core.ConsoleAppender">
-    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-      <level>ALL</level>
-    </filter>
-    <encoder>
-      <pattern>${loggingPattern}</pattern>
-    </encoder>
-  </appender>
+    <appender name="console" class="ch.qos.logback.core.ConsoleAppender">
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>ALL</level>
+        </filter>
+        <encoder>
+            <pattern>${loggingPattern}</pattern>
+        </encoder>
+    </appender>
 
-  <logger level="ALL" name="ru.evotor" additivity="false">
-    <appender-ref ref="console" />
-  </logger>
+    <logger level="ALL" name="ru.evotor" additivity="false">
+        <appender-ref ref="console"/>
+    </logger>
 
-  <root level="INFO">
-    <appender-ref ref="console" />
-  </root>
-  
+    <root level="INFO">
+        <appender-ref ref="console"/>
+    </root>
+
 </configuration>
