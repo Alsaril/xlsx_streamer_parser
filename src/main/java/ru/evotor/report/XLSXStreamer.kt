@@ -4,88 +4,25 @@ import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStreamReader
-import java.util.*
-import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
-import kotlin.system.measureTimeMillis
+import kotlin.coroutines.experimental.buildSequence
 
-interface Transformation<A, B> {
-    fun transform(inp: Queue<A>): List<B>
+abstract class Pipeline<A, B>(protected val input: Sequence<A>) {
+    abstract fun asSequence(): Sequence<B>
+
+    fun <C> addTransformation(t: (Sequence<B>) -> C): Pipeline<A, C> = object : Pipeline<A, C>(input) {
+        override fun asSequence() = buildSequence {
+            while (true) {
+                yield(t(this@Pipeline.asSequence()))
+            }
+        }
+    }
 }
 
-abstract class Pipeline<A, B> {
-    private var callback: ((B) -> Unit)? = null
-
-    abstract fun consume(a: A)
-
-    protected fun fire(b: B) {
-        callback?.invoke(b)
-    }
-
-    private fun setCallback(callback: (B) -> Unit) {
-        this.callback = callback
-    }
-
-    fun <C> then(next: Transformation<B, C>, maxBufferSize: Int): Pipeline<A, C> {
-        val newPipeline = object : Pipeline<A, C>() {
-            override fun consume(a: A) {
-                this@Pipeline.consume(a)
-            }
-        }
-
-        val queue: Queue<B> = ArrayBlockingQueue(maxBufferSize)
-        setCallback {
-            queue.offer(it)
-            val result = next.transform(queue) // mb has result values
-            result.forEach(newPipeline::fire)
-        }
-        return newPipeline
-    }
-
-    fun then(next: (B) -> Unit): Pipeline<A, B> {
-        setCallback(next)
-        return this
-    }
-
-    fun <C> map(transform: (B) -> C): Pipeline<A, C> {
-        val newPipeline = object : Pipeline<A, C>() {
-            override fun consume(a: A) {
-                this@Pipeline.consume(a)
-            }
-        }
-
-        setCallback {
-            newPipeline.fire(transform(it))
-        }
-        return newPipeline
-    }
-
-    fun filter(predicate: (B) -> Boolean): Pipeline<A, B> {
-        val newPipeline = object : Pipeline<A, B>() {
-            override fun consume(a: A) {
-                this@Pipeline.consume(a)
-            }
-        }
-
-        setCallback {
-            if (predicate(it)) {
-                newPipeline.fire(it)
-            }
-        }
-        return newPipeline
-    }
-
-    companion object {
-        operator fun <T> invoke(): Pipeline<T, T> {
-            return object : Pipeline<T, T>() {
-                override fun consume(a: T) {
-                    fire(a)
-                }
-            }
-        }
-    }
+class InitialPipeline<A>(input: Sequence<A>) : Pipeline<A, A>(input) {
+    override fun asSequence() = input
 }
 
 sealed class Token
@@ -109,7 +46,7 @@ class SingleTagToken(name: String) : TagToken(name) {
     override fun toString() = "<$name/>"
 }
 
-class TokenCollector : Transformation<Char, Token> {
+/*class TokenCollector : Transformation<Char, Token> {
     private var tag = false
     private var open = false
     private var start = false
@@ -117,6 +54,10 @@ class TokenCollector : Transformation<Char, Token> {
     private var text = ""
 
     override fun transform(inp: Queue<Char>): List<Token> {
+        buildSequence {
+
+        }
+
         val c = inp.poll()
         if (c == '<') {
             tag = true
@@ -148,38 +89,32 @@ class TokenCollector : Transformation<Char, Token> {
         text += c
         return emptyList()
     }
-}
+}*/
 
 fun processSheet(zin: ZipInputStream, name: String) {
     val map = mutableMapOf<Int, AtomicInteger>()
     val length = AtomicInteger()
 
-    val pipeline = Pipeline<Char>()
-            .then(TokenCollector(), 1000)
-            .filter { it is TextToken }
-            .map { (it as TextToken).text }
-            .then {
-                map.computeIfAbsent(it.length) { _ ->
-                    AtomicInteger(0)
-                }.incrementAndGet()
-                length.addAndGet(it.length)
-            }
-
     val z = InputStreamReader(zin, "utf8")
-    println("Took " + measureTimeMillis {
-        while (true) {
-            val read = z.read()
-            if (read == -1) {
-                break
-            }
-            pipeline.consume(read.toChar())
-        }
-    } + " ms")
 
+    val inp = generateSequence { }
+            .map { z.read() }
+            .takeWhile { it > 0 }
+            .map { it.toChar() }
+
+    val pipeline = InitialPipeline(inp)
+    pipeline.asSequence()
+            .map { it.toUpperCase() }
+            .forEach { print(it) }
+
+    println()
     println(length)
-    map.asSequence().map { e -> e.key to e.value }.sortedBy { p -> p.first }.forEach {
-        println("${it.first} ${it.second}")
-    }
+    map.asSequence()
+            .map { e -> e.key to e.value }
+            .sortedBy { p -> p.first }
+            .forEach {
+                println("${it.first} ${it.second}")
+            }
 }
 
 fun unzip(file: File) {
