@@ -9,6 +9,7 @@ import org.apache.poi.ss.usermodel.Sheet
 import org.apache.poi.ss.util.NumberToTextConverter
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.io.FileInputStream
 import java.util.*
 
 object Xlsx2JsonParser {
@@ -19,11 +20,12 @@ object Xlsx2JsonParser {
         StreamingReader.builder()
                 .rowCacheSize(100)
                 .bufferSize(4096)
-                .open(file).use { workbook ->
-            workbook.forEach {
-                process(parseSheet(file.name, it))
-            }
-        }
+                .open(FileInputStream(file))
+                .use { workbook ->
+                    workbook.forEach {
+                        process(parseSheet(file.name, it))
+                    }
+                }
         LOGGER.info("parsed file {}", file.name)
     }
 
