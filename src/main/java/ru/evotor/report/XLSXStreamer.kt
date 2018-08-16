@@ -5,11 +5,8 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.InputStreamReader
 import java.util.*
-import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
-import kotlin.system.measureTimeMillis
 
 interface Transformation<A, B> {
     fun transform(inp: Queue<A>): List<B>
@@ -35,7 +32,7 @@ abstract class Pipeline<A, B> {
             }
         }
 
-        val queue: Queue<B> = ArrayBlockingQueue(maxBufferSize)
+        val queue: Queue<B> = LinkedList()
         setCallback {
             queue.offer(it)
             val result = next.transform(queue) // mb has result values
@@ -49,7 +46,7 @@ abstract class Pipeline<A, B> {
         return this
     }
 
-    fun <C> map(transform: (B) -> C): Pipeline<A, C> {
+    private fun <C> reshape(callback: Pipeline<A, C>.(B) -> Unit): Pipeline<A, C> {
         val newPipeline = object : Pipeline<A, C>() {
             override fun consume(a: A) {
                 this@Pipeline.consume(a)
@@ -57,21 +54,87 @@ abstract class Pipeline<A, B> {
         }
 
         setCallback {
-            newPipeline.fire(transform(it))
+            newPipeline.callback(it)
         }
         return newPipeline
     }
 
-    fun filter(predicate: (B) -> Boolean): Pipeline<A, B> {
+    fun <C> map(transform: (B) -> C) = reshape<C> { fire(transform(it)) }
+
+    fun filter(predicate: (B) -> Boolean) = reshape<B> { if (predicate(it)) fire(it) }
+
+    fun dropWhile(predicate: (B) -> Boolean): Pipeline<A, B> {
         val newPipeline = object : Pipeline<A, B>() {
             override fun consume(a: A) {
                 this@Pipeline.consume(a)
             }
         }
 
+        var drop = true
+
         setCallback {
-            if (predicate(it)) {
+            if (!predicate(it)) {
+                drop = false
+            }
+            if (!drop) {
                 newPipeline.fire(it)
+            }
+        }
+        return newPipeline
+    }
+
+    fun take(count: Int): Pipeline<A, B> {
+        val newPipeline = object : Pipeline<A, B>() {
+            override fun consume(a: A) {
+                this@Pipeline.consume(a)
+            }
+        }
+
+        var passed = 0
+
+        setCallback {
+            if (passed < count) {
+                newPipeline.fire(it)
+                passed++
+            }
+        }
+        return newPipeline
+    }
+
+    fun drop(count: Int): Pipeline<A, B> {
+        val newPipeline = object : Pipeline<A, B>() {
+            override fun consume(a: A) {
+                this@Pipeline.consume(a)
+            }
+        }
+
+        var dropped = 0
+
+        setCallback {
+            if (dropped >= count) {
+                newPipeline.fire(it)
+            } else {
+                dropped++
+            }
+        }
+        return newPipeline
+    }
+
+    fun head(c: (B) -> Unit): Pipeline<A, B> {
+        val newPipeline = object : Pipeline<A, B>() {
+            override fun consume(a: A) {
+                this@Pipeline.consume(a)
+            }
+        }
+
+        var skip = false
+
+        setCallback {
+            if (skip) {
+                newPipeline.fire(it)
+            } else {
+                skip = true
+                c(it)
             }
         }
         return newPipeline
@@ -93,93 +156,171 @@ class TextToken(val text: String) : Token() {
     override fun toString() = "TextToken($text)"
 }
 
-open class TagToken(val name: String) : Token() {
-    override fun toString() = "TagToken($name)"
+abstract class TagToken(name: String) : Token() {
+    val name: String
+    val attrs: Map<String, String>
+
+    init {
+        val s = name.split(" ")
+        if (s.isEmpty()) {
+            throw IllegalArgumentException("Empty tag")
+        }
+        this.name = s[0]
+        val attrs = mutableMapOf<String, String>()
+        s.asSequence().drop(1).forEach {
+            val nv = it.split("=")
+            attrs[nv[0]] = nv[1].substring(1, nv[1].length - 1)
+        }
+        this.attrs = Collections.unmodifiableMap(attrs)
+    }
+
+    fun attribs() = attrs.map { e -> "${e.key}=\"${e.value}\"" }.joinToString(" ") { it }.let {
+        if (!it.isEmpty()) {
+            " $it"
+        } else {
+            ""
+        }
+    }
+
+    override fun toString() = "$prefix$name${attribs()}$postfix"
+
+    protected abstract val prefix: String
+    protected abstract val postfix: String
 }
 
 class OpenTagToken(name: String) : TagToken(name) {
-    override fun toString() = "<$name>"
+    override val prefix = "<"
+    override val postfix = ">"
 }
 
 class CloseTagToken(name: String) : TagToken(name) {
-    override fun toString() = "</$name>"
+    override val prefix = "</"
+    override val postfix = ">"
 }
 
 class SingleTagToken(name: String) : TagToken(name) {
-    override fun toString() = "<$name/>"
+    override val prefix = "<"
+    override val postfix = "/>"
 }
 
-class TokenCollector : Transformation<Char, Token> {
+class CharBuffer(val arr: CharArray, val length: Int)
+
+class TokenCollector : Transformation<CharBuffer, Token> {
     private var tag = false
     private var open = false
     private var start = false
     private var single = false
-    private var text = ""
+    private var escaped = false
+    private var text = StringBuilder()
 
-    override fun transform(inp: Queue<Char>): List<Token> {
-        val c = inp.poll()
-        if (c == '<') {
-            tag = true
-            open = true
-            start = true
-            single = false
-            val ret = text
-            text = ""
-            return if (ret.isEmpty()) emptyList() else listOf(TextToken(ret))
-        } else if (c == '>') {
-            tag = false
-            val ret = text
-            text = ""
-            return listOf(if (single) SingleTagToken(ret.substring(0, ret.length - 1)) else if (open) OpenTagToken(ret) else CloseTagToken(ret.substring(1)))
+    override fun transform(inp: Queue<CharBuffer>): List<Token> {
+        val ca = inp.poll()
+        val r = mutableListOf<Token>()
+        for (i in 0..(ca.length - 1)) {
+            val c = ca.arr[i]
+            if (c == '<') {
+                tag = true
+                open = true
+                start = true
+                single = false
+                escaped = false
+                val ret = text.toString()
+                text = StringBuilder()
+                if (!ret.isEmpty()) {
+                    r.add(TextToken(ret))
+                }
+                continue
+
+            } else if (c == '>') {
+                tag = false
+                val ret = text.toString()
+                text = StringBuilder()
+                r.add(if (single) SingleTagToken(ret.substring(0, ret.length - 1)) else if (open) OpenTagToken(ret) else CloseTagToken(ret.substring(1)))
+                continue
+            }
+
+            if (c == '"') {
+                escaped = !escaped
+            }
+
+            if (start && c == '/') {
+                open = false
+            }
+
+            if (c == '/' && !start && !escaped) {
+                single = true
+            }
+
+            if (start) {
+                start = false
+            }
+
+            text.append(c)
         }
-
-        if (start && c == '/') {
-            open = false
-        }
-
-        if (c == '/' && !start) {
-            single = true
-        }
-
-        if (start) {
-            start = false
-        }
-
-        text += c
-        return emptyList()
+        return r
     }
 }
 
-fun processSheet(zin: ZipInputStream, name: String) {
-    val map = mutableMapOf<Int, AtomicInteger>()
-    val length = AtomicInteger()
+class RowCollector : Transformation<Token, String> {
+    private var state = 0
+    private var read = 0
+    override fun transform(inp: Queue<Token>): List<String> {
+        if (state == 5) return emptyList()
+        val result = mutableListOf<String>()
+        while (!inp.isEmpty()) {
+            val t = inp.poll()
+            read++
 
-    val pipeline = Pipeline<Char>()
+            when {
+                state == 0 && t is OpenTagToken && t.name == "si" -> state = 1
+                state == 1 && t is OpenTagToken && t.name == "t" -> state = 2
+                state == 2 && t is TextToken -> {
+                    state = 3
+                    result.add(t.text)
+                }
+                state == 3 && t is CloseTagToken && t.name == "t" -> state = 4
+                state == 4 && t is CloseTagToken && t.name == "si" -> state = 0
+                else -> state = 5
+            }
+        }
+        return result
+    }
+}
+
+fun processSheet(zin: ZipInputStream, name: String): Array<String> {
+    var ret: Array<String> = Array(0) { "" }
+    var i = 0
+
+    val pipeline = Pipeline<CharBuffer>()
             .then(TokenCollector(), 1000)
-            .filter { it is TextToken }
-            .map { (it as TextToken).text }
+            .dropWhile { it !is OpenTagToken || it.name != "sst" }
+            .head {
+                ret = Array((it as OpenTagToken).attrs["uniqueCount"]?.toInt() ?: throw IllegalStateException()) { _ -> "" }
+            }
+            .then(RowCollector(), 1000)
             .then {
-                map.computeIfAbsent(it.length) { _ ->
-                    AtomicInteger(0)
-                }.incrementAndGet()
-                length.addAndGet(it.length)
+                ret[i++] = it
             }
 
     val z = InputStreamReader(zin, "utf8")
-    println("Took " + measureTimeMillis {
-        while (true) {
-            val read = z.read()
-            if (read == -1) {
-                break
-            }
-            pipeline.consume(read.toChar())
-        }
-    } + " ms")
+    val SIZE = 512
+    val arr = CharArray(SIZE)
 
-    println(length)
-    map.asSequence().map { e -> e.key to e.value }.sortedBy { p -> p.first }.forEach {
-        println("${it.first} ${it.second}")
+    readLine()
+
+    while (true) {
+        val read = z.read(arr, 0, SIZE)
+        if (read == -1) {
+            break
+        }
+        pipeline.consume(CharBuffer(arr, read))
     }
+
+
+
+    readLine()
+
+    return ret
 }
 
 fun unzip(file: File) {
