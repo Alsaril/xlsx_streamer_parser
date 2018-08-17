@@ -9,7 +9,7 @@ interface Buffer<T> {
     fun size(): Int
 }
 
-class CyclicBuffer<T>(initialSize: Int = 16, private val maxSize: Int = Int.MAX_VALUE) : Buffer<T> {
+class RingBuffer<T>(initialSize: Int = 16, private val maxSize: Int = Int.MAX_VALUE) : Buffer<T> {
     private object EMPTY
 
     private var array = Array<Any>(initialSize) { EMPTY }
@@ -32,6 +32,7 @@ class CyclicBuffer<T>(initialSize: Int = 16, private val maxSize: Int = Int.MAX_
     override fun get(): T {
         checkSize()
         val ret = array[readIndex]
+        array[readIndex] = EMPTY
         if (readIndex == array.size) {
             readIndex = 0
             direct = true
@@ -65,6 +66,7 @@ class CyclicBuffer<T>(initialSize: Int = 16, private val maxSize: Int = Int.MAX_
             array = newArr
             writeIndex += array.size - readIndex
             readIndex = 0
+            direct = true
         }
     }
 }
