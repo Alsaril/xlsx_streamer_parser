@@ -263,13 +263,11 @@ class TokenCollector : Transformation<CharBuffer, Token> {
 
 class RowCollector : Transformation<Token, String> {
     private var state = 0
-    private var read = 0
     override fun transform(inp: Queue<Token>): List<String> {
         if (state == 5) return emptyList()
         val result = mutableListOf<String>()
         while (!inp.isEmpty()) {
             val t = inp.poll()
-            read++
 
             when {
                 state == 0 && t is OpenTagToken && t.name == "si" -> state = 1
@@ -295,7 +293,7 @@ fun processSheet(zin: ZipInputStream, name: String): Array<String> {
             .then(TokenCollector(), 1000)
             .dropWhile { it !is OpenTagToken || it.name != "sst" }
             .head {
-                ret = Array((it as OpenTagToken).attrs["uniqueCount"]?.toInt() ?: throw IllegalStateException()) { _ -> "" }
+                ret = Array((it as? OpenTagToken)?.attrs?.get("uniqueCount")?.toIntOrNull() ?: throw IllegalStateException()) { _ -> "" }
             }
             .then(RowCollector(), 1000)
             .then {
